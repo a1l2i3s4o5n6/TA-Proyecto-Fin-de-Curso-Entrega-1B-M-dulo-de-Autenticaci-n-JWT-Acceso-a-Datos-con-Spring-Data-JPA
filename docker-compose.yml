@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: biblioteca-postgres
+    environment:
+      POSTGRES_DB: biblioteca_db
+      POSTGRES_USER: biblioteca_user
+      POSTGRES_PASSWORD: biblioteca_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U biblioteca_user -d biblioteca_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - biblioteca-net
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    container_name: biblioteca-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - biblioteca-net
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: biblioteca-backend
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/biblioteca_db
+      SPRING_DATASOURCE_USERNAME: biblioteca_user
+      SPRING_DATASOURCE_PASSWORD: biblioteca_pass
+      SPRING_DATA_REDIS_HOST: redis
+      SPRING_DATA_REDIS_PORT: 6379
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - biblioteca-net
+    restart: unless-stopped
+
+  frontend:
+    image: nginx:alpine
+    container_name: biblioteca-frontend
+    ports:
+      - "80:80"
+    volumes:
+      - ./frontend/nginx/default.conf:/etc/nginx/conf.d/default.conf
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      - backend
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - biblioteca-net
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+
+networks:
+  biblioteca-net:
+    driver: bridge
